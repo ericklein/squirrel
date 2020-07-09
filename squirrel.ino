@@ -6,8 +6,9 @@
   See README.md for target information, revision history, feature requests, etc.
 */
 
-// Conditional (hardware functionality)
+// Conditionals (hardware functionality)
 #define DEBUG 			// debug messages to serial port
+//#define ULTRASONIC	// ultrasonic sensor
 
 // include SPI, MP3 and SD libraries
 #include <SPI.h>
@@ -25,9 +26,16 @@
 Adafruit_VS1053_FilePlayer musicPlayer = 
   Adafruit_VS1053_FilePlayer(VS1053_RESET, VS1053_CS, VS1053_DCS, VS1053_DREQ, CARDCS);
 
-// ultrasound
-#define triggerPin	12
-#define echoPin 	11
+// range finding
+#ifdef ULTRASONIC
+	// HR-404SC
+	#define triggerPin	12
+	#define echoPin 	11
+#else
+	//VL53L0X
+	#include "Adafruit_VL53L0X.h"
+	Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+#endif
 const byte triggerDistance = 20;  // Distance in cm to toggle LCD backlight
 
 void setup()
@@ -41,9 +49,22 @@ void setup()
 	 	Serial.println("Squirrel app launched");
 	#endif
 
-	//Setup ultrasonic sensor
-	pinMode(triggerPin, OUTPUT);
-	pinMode(echoPin, INPUT);
+	#ifdef ULTRASONIC
+		//Setup ultrasonic sensor
+		pinMode(triggerPin, OUTPUT);
+		pinMode(echoPin, INPUT);
+	#else
+		if (!lox.begin())
+		{
+    		#ifdef DEBUG
+    			Serial.println("Failed to initialize VL53L0X");
+			#endif
+    		while(1);
+  		}
+  			#ifdef DEBUG
+  				Serial.println("VL53L0X initialized");
+			#endif
+	#endif
 
 	if (! musicPlayer.begin())
 	{ // initialise the music player
@@ -53,10 +74,10 @@ void setup()
      	while (1);
   	}
 	#ifdef DEBUG
-  		Serial.println("VS1053 found");
+  		Serial.println("VS1053 initialized");
+	  	musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
 	#endif
 
-  	musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
   
   	if (!SD.begin(CARDCS))
   	{
@@ -88,29 +109,45 @@ void loop()
 int readDistance ()
 {
     // Returns distance from sensor in centimeters
-	long duration;
-	int  cm;
+	int  distance;
 
-	// ultrasonic sensor read
-	// clears the triggerPin
-	digitalWrite(triggerPin, LOW);
-	delayMicroseconds(2);
-	// Sets the triggerPin on HIGH state for 10 microseconds
-	digitalWrite(triggerPin, HIGH);
-	delayMicroseconds(10);
-	digitalWrite(triggerPin, LOW);
-	// Reads the echoPin, returns the sound wave travel time in microseconds
-	duration = pulseIn(echoPin, HIGH);
-	// Distance = (Speed of sound * Time delay) / 2
-	// the speed of sound is 343.4 m/s or 0.0343 cm/microsecond to the Temperature of 20°C.
-	// inches = (duration/2) / 741;
-	cm = duration / 58;
+	#ifdef ULTRASONIC
+		long duration;
+		// clears the triggerPin
+		digitalWrite(triggerPin, LOW);
+		delayMicroseconds(2);
+		// Sets the triggerPin on HIGH state for 10 microseconds
+		digitalWrite(triggerPin, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(triggerPin, LOW);
+		// Reads the echoPin, returns the sound wave travel time in microseconds
+		duration = pulseIn(echoPin, HIGH);
+		// Distance = (Speed of sound * Time delay) / 2
+		// the speed of sound is 343.4 m/s or 0.0343 cm/microsecond to the Temperature of 20°C.
+		// inches = (duration/2) / 741;
+		distance = duration / 58;
+	#else
+		VL53L0X_RangingMeasurementData_t measure;
+		lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
+  		if (measure.RangeStatus != 4)
+  		{  
+    		Serial.print("Distance (mm): "); Serial.println(measure.RangeMilliMeter);
+	  		distance = measure.RangeMilliMeter/10; // converting mm to cm
+  		}
+  		else
+  		{
+    		// phase failures have incorrect data
+  			#ifdef DEBUG
+  				Serial.println("distance measurement out of range");
+			#endif
+  		}
+	#endif
 	#ifdef DEBUG
 		Serial.print("Distance to object is ");
-		Serial.print(cm);
+		Serial.print(distance);
 		Serial.println(" cm");
 	#endif
-	return (cm);
+	return (distance);
 }
 
 void annoySquirrel(int distance)
